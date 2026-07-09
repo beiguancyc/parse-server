@@ -16,7 +16,7 @@ coverage
 .nyc_output
 
 # docs output
-out 
+out
 docs
 
 # Grunt intermediate storage (http://gruntjs.com/creating-plugins#storing-task-files)
@@ -45,7 +45,7 @@ node_modules
 .vscode
 
 # Babel.js
-lib/
+# lib/
 # types/* once we have full typescript support, we can generate types from the typescript files
 !types/tsconfig.json
 
