@@ -61,6 +61,7 @@ export function getLoggerController(options: ParseServerOptions): LoggerControll
     logsFolder,
     verbose,
     logLevel,
+    logStringTruncateLength,
     maxLogFiles,
     silent,
     loggerAdapter,
@@ -70,6 +71,7 @@ export function getLoggerController(options: ParseServerOptions): LoggerControll
     logsFolder,
     verbose,
     logLevel,
+    logStringTruncateLength,
     silent,
     maxLogFiles,
   };

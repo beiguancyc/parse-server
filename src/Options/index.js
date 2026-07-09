@@ -119,6 +119,9 @@ export interface ParseServerOptions {
   /* (Optional) Overrides the log levels used internally by Parse Server to log events.
   :DEFAULT: {} */
   logLevels: ?LogLevels;
+  /* Maximum length of log message strings before truncation in Cloud Code logs.
+  :DEFAULT: 1000 */
+  logStringTruncateLength: ?number;
   /* Maximum number of logs to keep. If not set, no logs will be removed. This can be a number of files or number of days. If using days, add 'd' as the suffix. (default: null) */
   maxLogFiles: ?NumberOrString;
   /* Disables console output

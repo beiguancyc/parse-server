@@ -63,6 +63,7 @@ export interface ParseServerOptions {
     verbose?: boolean;
     logLevel?: string;
     logLevels?: LogLevels;
+    logStringTruncateLength?: number;
     maxLogFiles?: NumberOrString;
     silent?: boolean;
     databaseURI: string;
