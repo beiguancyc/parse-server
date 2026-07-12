@@ -1,6 +1,9 @@
 {
   "name": "@beiguancyc/parse-server",
   "version": "9.9.0-ruixiang.1",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "An express module providing a Parse-compatible API server",
   "main": "lib/index.js",
   "repository": {
