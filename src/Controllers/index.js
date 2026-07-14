@@ -17,6 +17,7 @@ import DatabaseController from './DatabaseController';
 
 // Adapters
 import { GridFSBucketAdapter } from '../Adapters/Files/GridFSBucketAdapter';
+import { setupFilesLink } from '../Adapters/Files/setupFilesLink';
 import { WinstonLoggerAdapter } from '../Adapters/Logger/WinstonLoggerAdapter';
 import { InMemoryCacheAdapter } from '../Adapters/Cache/InMemoryCacheAdapter';
 import { AnalyticsAdapter } from '../Adapters/Analytics/AnalyticsAdapter';
@@ -92,6 +93,8 @@ export function getFilesController(options: ParseServerOptions): FilesController
   if (!filesAdapter && databaseAdapter) {
     throw 'When using an explicit database adapter, you must also use an explicit filesAdapter.';
   }
+  // Optional: symlink files/{filesSubDirectory} -> filesLinkTarget before FS adapter init
+  setupFilesLink(filesAdapter);
   const filesControllerAdapter = loadAdapter(filesAdapter, () => {
     return new GridFSBucketAdapter(databaseURI, databaseOptions, fileKey);
   });
