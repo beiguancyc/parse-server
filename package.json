@@ -1,6 +1,6 @@
 {
   "name": "@beiguancyc/parse-server",
-  "version": "9.10.0-ruixiang.1",
+  "version": "9.10.0-ruixiang.2",
   "publishConfig": {
     "access": "public"
   },
