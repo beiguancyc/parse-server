@@ -87,7 +87,7 @@
  * @property {Number} objectIdSize Sets the number of characters in generated object id's, default 10
  * @property {PagesOptions} pages The options for pages such as password reset and email verification.
  * @property {PasswordPolicyOptions} passwordPolicy The password policy for enforcing password related rules.
- * @property {String} playgroundPath Deprecated. Mount path for the GraphQL Playground. The playground is deprecated and will be removed in a future version.
+ * @property {String} playgroundPath Deprecated. Mount path for the GraphQL Playground. The playground is deprecated and will be removed in a future version. If unset, Playground mounts at `/playground` when `mountPlayground` is enabled.
  * @property {Number} port The port to run the ParseServer, defaults to 1337.
  * @property {Boolean} preserveFileName Enable (or disable) the addition of a unique hash to the file names
  * @property {Boolean} preventLoginWithUnverifiedEmail Set to `true` to prevent a user from logging in if the email has not yet been verified and email verification is required. Supports a function with a return value of `true` or `false` for conditional prevention. The function receives a request object that includes `createdWith` to indicate whether the invocation is for `signup` or `login` and the used auth provider.<br><br>The `createdWith` values per scenario:<ul><li>Password signup: `{ action: 'signup', authProvider: 'password' }`</li><li>Auth provider signup: `{ action: 'signup', authProvider: '<provider>' }`</li><li>Password login: `{ action: 'login', authProvider: 'password' }`</li><li>Auth provider login: function not invoked; auth provider login bypasses email verification</li></ul>Default is `false`.<br>Requires option `verifyUserEmails: true`.
@@ -272,7 +272,7 @@
 
 /**
  * @interface FileUploadOptions
- * @property {String[]} allowedFileUrlDomains Sets the allowed hostnames for file URLs referenced in Parse objects. When a File object includes a URL, its hostname must match one of these entries to be accepted. Supports exact hostnames (e.g., `'cdn.example.com'`) and wildcard subdomains (e.g., `'*.example.com'`). Use `['*']` to allow any domain. Use `[]` to block all file URLs (only name-based files allowed).
+ * @property {String[]} allowedFileUrlDomains Sets the allowed hostnames for file URLs referenced in Parse objects. When a File object includes a URL, its hostname must match one of these entries to be accepted. Supports exact hostnames (e.g., `'cdn.example.com'`) and wildcard subdomains (e.g., `'*.example.com'`). Use `['*']` to allow any domain. Use `[]` to block all file URLs (only name-based files allowed).<br><br>If this option is not set, it defaults to the hostnames of `publicServerURL` and `serverURL`, so files hosted by Parse Server are allowed without opening arbitrary domains.
  * @property {Boolean} enableForAnonymousUser Is true if file upload should be allowed for anonymous users.
  * @property {Boolean} enableForAuthenticatedUser Is true if file upload should be allowed for authenticated users.
  * @property {Boolean} enableForPublic Is true if file upload should be allowed for anyone, regardless of user authentication.

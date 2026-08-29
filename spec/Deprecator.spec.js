@@ -71,39 +71,6 @@ describe('Deprecator', () => {
     expect(logSpy).not.toHaveBeenCalled();
   });
 
-  it('logs deprecation for allowedFileUrlDomains when not set', async () => {
-    const logSpy = spyOn(Deprecator, '_logOption').and.callFake(() => {});
-
-    // Pass a fresh fileUpload object without allowedFileUrlDomains to avoid
-    // inheriting the mutated default from a previous reconfigureServer() call.
-    await reconfigureServer({
-      fileUpload: {
-        enableForPublic: true,
-        enableForAnonymousUser: true,
-        enableForAuthenticatedUser: true,
-      },
-    });
-    expect(logSpy).toHaveBeenCalledWith(
-      jasmine.objectContaining({
-        optionKey: 'fileUpload.allowedFileUrlDomains',
-        changeNewDefault: '[]',
-      })
-    );
-  });
-
-  it('does not log deprecation for allowedFileUrlDomains when explicitly set', async () => {
-    const logSpy = spyOn(Deprecator, '_logOption').and.callFake(() => {});
-
-    await reconfigureServer({
-      fileUpload: { allowedFileUrlDomains: ['*'] },
-    });
-    expect(logSpy).not.toHaveBeenCalledWith(
-      jasmine.objectContaining({
-        optionKey: 'fileUpload.allowedFileUrlDomains',
-      })
-    );
-  });
-
   it('logs deprecation for removed key when option is set', async () => {
     deprecations = [{ optionKey: 'exampleKey', changeNewKey: '', solution: 'Use something else.' }];
 
@@ -143,6 +110,40 @@ describe('Deprecator', () => {
     const logSpy = spyOn(Deprecator, '_logOption').and.callFake(() => {});
 
     await reconfigureServer();
+    expect(logSpy).not.toHaveBeenCalledWith(
+      jasmine.objectContaining({
+        optionKey: 'mountPlayground',
+      })
+    );
+  });
+
+  it('does not log deprecation for playgroundPath when not set', async () => {
+    const logSpy = spyOn(Deprecator, '_logOption').and.callFake(() => {});
+
+    await reconfigureServer();
+    expect(logSpy).not.toHaveBeenCalledWith(
+      jasmine.objectContaining({
+        optionKey: 'playgroundPath',
+      })
+    );
+  });
+
+  it('logs deprecation for playgroundPath when explicitly set', async () => {
+    const logSpy = spyOn(Deprecator, '_logOption').and.callFake(() => {});
+
+    await reconfigureServer({ playgroundPath: '/custom-playground' });
+    expect(logSpy).toHaveBeenCalledWith(
+      jasmine.objectContaining({
+        optionKey: 'playgroundPath',
+        changeNewKey: '',
+      })
+    );
+  });
+
+  it('does not log deprecation for mountPlayground when set to false', async () => {
+    const logSpy = spyOn(Deprecator, '_logOption').and.callFake(() => {});
+
+    await reconfigureServer({ mountPlayground: false });
     expect(logSpy).not.toHaveBeenCalledWith(
       jasmine.objectContaining({
         optionKey: 'mountPlayground',

@@ -108,7 +108,7 @@ runner({
             process.pid +
             '] Playground running on http://localhost:' +
             options.port +
-            options.playgroundPath
+            (options.playgroundPath || '/playground')
         );
       }
     }

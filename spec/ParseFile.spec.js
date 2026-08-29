@@ -2057,11 +2057,115 @@ describe('Parse.File testing', () => {
       expect(result).toBe('ok');
     });
 
-    it('allows file URLs when default wildcard is used', async () => {
+    it('allows file URLs on the server host when allowedFileUrlDomains is unset', async () => {
       Parse.Cloud.define('setUserIcon', () => 'ok');
 
       const result = await Parse.Cloud.run('setUserIcon', {
-        file: { __type: 'File', name: 'file.txt', url: 'http://example.com/file.txt' },
+        file: { __type: 'File', name: 'file.txt', url: 'http://localhost:8378/1/files/test/file.txt' },
+      });
+      expect(result).toBe('ok');
+    });
+
+    it('rejects other hosts when allowedFileUrlDomains is unset', async () => {
+      Parse.Cloud.define('setUserIcon', () => {});
+
+      await expectAsync(
+        Parse.Cloud.run('setUserIcon', {
+          file: { __type: 'File', name: 'file.txt', url: 'http://example.com/file.txt' },
+        })
+      ).toBeRejectedWith(
+        jasmine.objectContaining({ message: jasmine.stringMatching(/not allowed/) })
+      );
+    });
+
+    it('defaults allowedFileUrlDomains to publicServerURL hostname', async () => {
+      await reconfigureServer({
+        publicServerURL: 'https://cdn.example.com/parse',
+        fileUpload: {
+          enableForPublic: true,
+          enableForAnonymousUser: true,
+          enableForAuthenticatedUser: true,
+        },
+      });
+
+      Parse.Cloud.define('setUserIcon', () => 'ok');
+
+      const result = await Parse.Cloud.run('setUserIcon', {
+        file: { __type: 'File', name: 'file.txt', url: 'https://cdn.example.com/files/file.txt' },
+      });
+      expect(result).toBe('ok');
+
+      await expectAsync(
+        Parse.Cloud.run('setUserIcon', {
+          file: { __type: 'File', name: 'file.txt', url: 'http://malicious.example.com/file.txt' },
+        })
+      ).toBeRejectedWith(
+        jasmine.objectContaining({ message: jasmine.stringMatching(/not allowed/) })
+      );
+    });
+
+    it('does not add publicServerURL when allowedFileUrlDomains is set explicitly', async () => {
+      await reconfigureServer({
+        publicServerURL: 'https://cdn.example.com/parse',
+        fileUpload: {
+          enableForPublic: true,
+          enableForAnonymousUser: true,
+          enableForAuthenticatedUser: true,
+          allowedFileUrlDomains: ['other.example.com'],
+        },
+      });
+
+      Parse.Cloud.define('setUserIcon', () => {});
+
+      await expectAsync(
+        Parse.Cloud.run('setUserIcon', {
+          file: { __type: 'File', name: 'file.txt', url: 'https://cdn.example.com/files/file.txt' },
+        })
+      ).toBeRejectedWith(
+        jasmine.objectContaining({ message: jasmine.stringMatching(/not allowed/) })
+      );
+    });
+
+    it('still blocks all file URLs when allowedFileUrlDomains is an empty array', async () => {
+      await reconfigureServer({
+        publicServerURL: 'https://cdn.example.com/parse',
+        fileUpload: {
+          enableForPublic: true,
+          enableForAnonymousUser: true,
+          enableForAuthenticatedUser: true,
+          allowedFileUrlDomains: [],
+        },
+      });
+
+      Parse.Cloud.define('setUserIcon', () => {});
+
+      await expectAsync(
+        Parse.Cloud.run('setUserIcon', {
+          file: { __type: 'File', name: 'file.txt', url: 'https://cdn.example.com/files/file.txt' },
+        })
+      ).toBeRejectedWith(
+        jasmine.objectContaining({ message: jasmine.stringMatching(/not allowed/) })
+      );
+    });
+
+    it('includes async publicServerURL hostname in the default allowlist', async () => {
+      await reconfigureServer({
+        publicServerURL: async () => 'https://async-cdn.example.com/parse',
+        fileUpload: {
+          enableForPublic: true,
+          enableForAnonymousUser: true,
+          enableForAuthenticatedUser: true,
+        },
+      });
+
+      Parse.Cloud.define('setUserIcon', () => 'ok');
+
+      const result = await Parse.Cloud.run('setUserIcon', {
+        file: {
+          __type: 'File',
+          name: 'file.txt',
+          url: 'https://async-cdn.example.com/files/file.txt',
+        },
       });
       expect(result).toBe('ok');
     });
@@ -2095,7 +2199,7 @@ describe('Parse.File testing', () => {
       expect(result.status).toBe(201);
     });
 
-    it('allows REST API create with file URL when default wildcard is used', async () => {
+    it('allows REST API create with file URL on the server host when unset', async () => {
       const result = await request({
         method: 'POST',
         url: 'http://localhost:8378/1/classes/TestObject',
@@ -2108,7 +2212,7 @@ describe('Parse.File testing', () => {
           file: {
             __type: 'File',
             name: 'test.txt',
-            url: 'http://example.com/file.txt',
+            url: 'http://localhost:8378/1/files/test/file.txt',
           },
         },
       });

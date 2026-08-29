@@ -27,6 +27,7 @@ import {
 import ParseServer from './cloud-code/Parse.Server';
 import Deprecator from './Deprecator/Deprecator';
 import Utils from './Utils';
+import { defaultAllowedFileUrlDomains } from './FileUrlValidator';
 
 function removeTrailingSlash(str) {
   if (!str) {
@@ -80,12 +81,24 @@ export class Config {
       })
     );
 
+    // publicServerURL may only be a string after this async resolve; rebuild
+    // the default file-URL allowlist so it includes that hostname.
+    if (this._allowedFileUrlDomainsIsDefault) {
+      this.fileUpload = {
+        ...this.fileUpload,
+        allowedFileUrlDomains: defaultAllowedFileUrlDomains([this.publicServerURL, this.serverURL]),
+      };
+    }
+
     const cachedConfig = AppCache.get(this.appId);
     if (cachedConfig) {
       const updatedConfig = { ...cachedConfig };
       asyncKeys.forEach(key => {
         updatedConfig[key] = this[key];
       });
+      if (this._allowedFileUrlDomainsIsDefault) {
+        updatedConfig.fileUpload = this.fileUpload;
+      }
       AppCache.put(this.appId, updatedConfig);
     }
   }
@@ -132,6 +145,7 @@ export class Config {
     allowHeaders,
     idempotencyOptions,
     fileUpload,
+    serverURL,
     fileDownload,
     pages,
     security,
@@ -160,7 +174,13 @@ export class Config {
 
     this.validateAccountLockoutPolicy(accountLockout);
     this.validatePasswordPolicy(passwordPolicy);
-    this.validateFileUploadOptions(fileUpload);
+    const usedDefaultAllowedFileUrlDomains = this.validateFileUploadOptions(fileUpload, {
+      publicServerURL,
+      serverURL,
+    });
+    if (usedDefaultAllowedFileUrlDomains) {
+      arguments[0]._allowedFileUrlDomainsIsDefault = true;
+    }
     if (fileDownload == null) {
       fileDownload = {};
       arguments[0].fileDownload = fileDownload;
@@ -552,7 +572,7 @@ export class Config {
     }
   }
 
-  static validateFileUploadOptions(fileUpload) {
+  static validateFileUploadOptions(fileUpload, { publicServerURL, serverURL } = {}) {
     try {
       if (fileUpload == null || typeof fileUpload !== 'object' || Array.isArray(fileUpload)) {
         throw 'fileUpload must be an object value.';
@@ -584,7 +604,13 @@ export class Config {
       throw 'fileUpload.fileExtensions must be an array.';
     }
     if (fileUpload.allowedFileUrlDomains === undefined) {
-      fileUpload.allowedFileUrlDomains = FileUploadOptions.allowedFileUrlDomains.default;
+      // Unset means "trust this server", not "trust the internet" (`['*']`)
+      // and not "block everything" (`[]`). Explicit `[]` still blocks all.
+      fileUpload.allowedFileUrlDomains = defaultAllowedFileUrlDomains([
+        publicServerURL,
+        serverURL,
+      ]);
+      return true;
     } else if (!Array.isArray(fileUpload.allowedFileUrlDomains)) {
       throw 'fileUpload.allowedFileUrlDomains must be an array.';
     } else {
@@ -594,6 +620,7 @@ export class Config {
         }
       }
     }
+    return false;
   }
 
   static validateFileDownloadOptions(fileDownload) {

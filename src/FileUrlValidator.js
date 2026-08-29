@@ -1,6 +1,65 @@
 const Parse = require('parse/node').Parse;
 
 /**
+ * Extract a hostname from a server URL string.
+ * Functions (async publicServerURL) and invalid URLs are skipped.
+ */
+function hostnameFromUrl(url) {
+  if (typeof url !== 'string' || url === '') {
+    return;
+  }
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname ? hostname.toLowerCase() : undefined;
+  } catch {
+    return;
+  }
+}
+
+/**
+ * Build the default file-URL allowlist from Parse Server's own URLs.
+ * Unconfigured allowedFileUrlDomains should trust the server's public host,
+ * not every domain on the internet.
+ */
+function defaultAllowedFileUrlDomains(urls = []) {
+  const seen = new Set();
+  const hostnames = [];
+  for (const url of urls) {
+    const hostname = hostnameFromUrl(url);
+    if (hostname && !seen.has(hostname)) {
+      seen.add(hostname);
+      hostnames.push(hostname);
+    }
+  }
+  return hostnames;
+}
+
+/**
+ * When the allowlist was defaulted (not set by the operator), also include
+ * hostnames from the current publicServerURL / serverURL. publicServerURL can
+ * be a function resolved later via loadKeys, so the stored array may be stale.
+ */
+function resolveAllowedFileUrlDomains(config) {
+  const domains = config?.fileUpload?.allowedFileUrlDomains;
+  if (!Array.isArray(domains) || !config?._allowedFileUrlDomainsIsDefault) {
+    return domains;
+  }
+  const derived = defaultAllowedFileUrlDomains([config.publicServerURL, config.serverURL]);
+  if (derived.length === 0) {
+    return domains;
+  }
+  const seen = new Set(domains.map(domain => domain.toLowerCase()));
+  const merged = domains.slice();
+  for (const hostname of derived) {
+    if (!seen.has(hostname)) {
+      seen.add(hostname);
+      merged.push(hostname);
+    }
+  }
+  return merged;
+}
+
+/**
  * Validates whether a File URL is allowed based on the configured allowed domains.
  * @param {string} fileUrl - The URL to validate.
  * @param {Object} config - The Parse Server config object.
@@ -11,7 +70,7 @@ function validateFileUrl(fileUrl, config) {
     return;
   }
 
-  const domains = config?.fileUpload?.allowedFileUrlDomains;
+  const domains = resolveAllowedFileUrlDomains(config);
   if (!Array.isArray(domains) || domains.includes('*')) {
     return;
   }
@@ -65,4 +124,8 @@ function validateFileUrlsInObject(obj, config) {
   }
 }
 
-module.exports = { validateFileUrl, validateFileUrlsInObject };
+module.exports = {
+  validateFileUrl,
+  validateFileUrlsInObject,
+  defaultAllowedFileUrlDomains,
+};

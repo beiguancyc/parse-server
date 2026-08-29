@@ -449,7 +449,7 @@ class ParseServer {
 
       const parseGraphQLServer = new ParseGraphQLServer(this, {
         graphQLPath: options.graphQLPath,
-        playgroundPath: options.playgroundPath,
+        playgroundPath: options.playgroundPath || '/playground',
         graphQLCustomTypeDefs,
       });
 

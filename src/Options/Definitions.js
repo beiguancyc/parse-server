@@ -467,8 +467,7 @@ module.exports.ParseServerOptions = {
   },
   playgroundPath: {
     env: 'PARSE_SERVER_PLAYGROUND_PATH',
-    help: 'Deprecated. Mount path for the GraphQL Playground. The playground is deprecated and will be removed in a future version.',
-    default: '/playground',
+    help: 'Deprecated. Mount path for the GraphQL Playground. The playground is deprecated and will be removed in a future version. If unset, Playground mounts at `/playground` when `mountPlayground` is enabled.',
   },
   port: {
     env: 'PORT',
@@ -1159,9 +1158,8 @@ module.exports.PasswordPolicyOptions = {
 module.exports.FileUploadOptions = {
   allowedFileUrlDomains: {
     env: 'PARSE_SERVER_FILE_UPLOAD_ALLOWED_FILE_URL_DOMAINS',
-    help: "Sets the allowed hostnames for file URLs referenced in Parse objects. When a File object includes a URL, its hostname must match one of these entries to be accepted. Supports exact hostnames (e.g., `'cdn.example.com'`) and wildcard subdomains (e.g., `'*.example.com'`). Use `['*']` to allow any domain. Use `[]` to block all file URLs (only name-based files allowed).",
+    help: "Sets the allowed hostnames for file URLs referenced in Parse objects. When a File object includes a URL, its hostname must match one of these entries to be accepted. Supports exact hostnames (e.g., `'cdn.example.com'`) and wildcard subdomains (e.g., `'*.example.com'`). Use `['*']` to allow any domain. Use `[]` to block all file URLs (only name-based files allowed).<br><br>If this option is not set, it defaults to the hostnames of `publicServerURL` and `serverURL`, so files hosted by Parse Server are allowed without opening arbitrary domains.",
     action: parsers.arrayParser,
-    default: ['*'],
   },
   enableForAnonymousUser: {
     env: 'PARSE_SERVER_FILE_UPLOAD_ENABLE_FOR_ANONYMOUS_USER',

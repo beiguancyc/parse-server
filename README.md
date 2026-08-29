@@ -608,12 +608,13 @@ const parseServer = new ParseServer({
 
 | Parameter | Optional | Type | Default | Environment Variable |
 |---|---|---|---|---|
-| `fileUpload.allowedFileUrlDomains` | yes | `String[]` | `['*']` | `PARSE_SERVER_FILE_UPLOAD_ALLOWED_FILE_URL_DOMAINS` |
+| `fileUpload.allowedFileUrlDomains` | yes | `String[]` | hostnames of `publicServerURL` and `serverURL` | `PARSE_SERVER_FILE_UPLOAD_ALLOWED_FILE_URL_DOMAINS` |
 
-- `['*']` (default) allows file URLs with any domain.
+- Unset (default) allows file URLs whose hostname matches `publicServerURL` and/or `serverURL`.
 - `['cdn.example.com']` allows only exact hostname matches.
 - `['*.example.com']` allows any subdomain of `example.com`.
-- `[]` blocks all file URLs; only files referenced by name are allowed.
+- `['*']` allows file URLs with any domain.
+- `[]` blocks all file URLs; only files referenced by name are allowed. An empty array is not the same as leaving the option unset.
 
 ## Idempotency Enforcement
 

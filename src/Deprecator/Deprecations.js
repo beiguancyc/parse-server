@@ -22,11 +22,6 @@
  */
 module.exports = [
   {
-    optionKey: 'fileUpload.allowedFileUrlDomains',
-    changeNewDefault: '[]',
-    solution: "Set 'fileUpload.allowedFileUrlDomains' to the domains you want to allow, or to '[]' to block all file URLs.",
-  },
-  {
     optionKey: 'pages.encodePageParamHeaders',
     changeNewDefault: 'true',
     solution: "Set 'pages.encodePageParamHeaders' to 'true' to URI-encode non-ASCII characters in page parameter headers.",
@@ -39,7 +34,8 @@ module.exports = [
   {
     optionKey: 'mountPlayground',
     changeNewKey: '',
-    solution: "Use Parse Dashboard as GraphQL IDE or configure a third-party GraphQL client such as Apollo Sandbox, GraphiQL, or Insomnia with custom request headers.",
+    resolvedValue: false,
+    solution: "Use Parse Dashboard as GraphQL IDE or configure a third-party GraphQL client such as Apollo Sandbox, GraphiQL, or Insomnia with custom request headers. Set 'mountPlayground' to 'false' or remove the option to accept the future removal.",
   },
   {
     optionKey: 'playgroundPath',

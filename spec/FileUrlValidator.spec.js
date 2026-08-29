@@ -1,6 +1,10 @@
 'use strict';
 
-const { validateFileUrl, validateFileUrlsInObject } = require('../src/FileUrlValidator');
+const {
+  validateFileUrl,
+  validateFileUrlsInObject,
+  defaultAllowedFileUrlDomains,
+} = require('../src/FileUrlValidator');
 
 describe('FileUrlValidator', () => {
   describe('validateFileUrl', () => {
@@ -80,6 +84,56 @@ describe('FileUrlValidator', () => {
       expect(() => validateFileUrl('https://example.com.malicious.example.com/file.txt', config)).toThrowError(
         /not allowed/
       );
+    });
+
+    it('merges publicServerURL hostname when the allowlist was defaulted', () => {
+      const config = {
+        _allowedFileUrlDomainsIsDefault: true,
+        publicServerURL: 'https://cdn.example.com/parse',
+        serverURL: 'http://localhost:1337/parse',
+        fileUpload: { allowedFileUrlDomains: ['localhost'] },
+      };
+      expect(() => validateFileUrl('https://cdn.example.com/file.txt', config)).not.toThrow();
+      expect(() => validateFileUrl('http://localhost:1337/file.txt', config)).not.toThrow();
+      expect(() => validateFileUrl('http://malicious.example.com/file.txt', config)).toThrowError(
+        /not allowed/
+      );
+    });
+
+    it('does not merge publicServerURL when the allowlist is explicit', () => {
+      const config = {
+        publicServerURL: 'https://cdn.example.com/parse',
+        fileUpload: { allowedFileUrlDomains: ['other.example.com'] },
+      };
+      expect(() => validateFileUrl('https://cdn.example.com/file.txt', config)).toThrowError(
+        /not allowed/
+      );
+    });
+  });
+
+  describe('defaultAllowedFileUrlDomains', () => {
+    it('extracts unique hostnames from publicServerURL and serverURL', () => {
+      expect(
+        defaultAllowedFileUrlDomains([
+          'https://cdn.example.com/parse',
+          'http://localhost:1337/parse',
+        ])
+      ).toEqual(['cdn.example.com', 'localhost']);
+    });
+
+    it('ignores functions, empty values, and invalid URLs', () => {
+      expect(
+        defaultAllowedFileUrlDomains([async () => 'https://cdn.example.com/parse', '', null, 'not-a-url'])
+      ).toEqual([]);
+    });
+
+    it('deduplicates the same hostname from both URLs', () => {
+      expect(
+        defaultAllowedFileUrlDomains([
+          'https://api.example.com/parse',
+          'http://api.example.com:8080/1',
+        ])
+      ).toEqual(['api.example.com']);
     });
   });
 

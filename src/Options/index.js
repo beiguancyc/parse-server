@@ -384,9 +384,8 @@ export interface ParseServerOptions {
   :ENV: PARSE_SERVER_MOUNT_PLAYGROUND
   :DEFAULT: false */
   mountPlayground: ?boolean;
-  /* Deprecated. Mount path for the GraphQL Playground. The playground is deprecated and will be removed in a future version.
-  :ENV: PARSE_SERVER_PLAYGROUND_PATH
-  :DEFAULT: /playground */
+  /* Deprecated. Mount path for the GraphQL Playground. The playground is deprecated and will be removed in a future version. If unset, Playground mounts at `/playground` when `mountPlayground` is enabled.
+  :ENV: PARSE_SERVER_PLAYGROUND_PATH */
   playgroundPath: ?string;
   /* Defined schema
   :ENV: PARSE_SERVER_SCHEMA
@@ -742,8 +741,7 @@ export interface FileUploadOptions {
   /* Is true if file upload should be allowed for anyone, regardless of user authentication.
   :DEFAULT: false */
   enableForPublic: ?boolean;
-  /* Sets the allowed hostnames for file URLs referenced in Parse objects. When a File object includes a URL, its hostname must match one of these entries to be accepted. Supports exact hostnames (e.g., `'cdn.example.com'`) and wildcard subdomains (e.g., `'*.example.com'`). Use `['*']` to allow any domain. Use `[]` to block all file URLs (only name-based files allowed).
-  :DEFAULT: ["*"] */
+  /* Sets the allowed hostnames for file URLs referenced in Parse objects. When a File object includes a URL, its hostname must match one of these entries to be accepted. Supports exact hostnames (e.g., `'cdn.example.com'`) and wildcard subdomains (e.g., `'*.example.com'`). Use `['*']` to allow any domain. Use `[]` to block all file URLs (only name-based files allowed).<br><br>If this option is not set, it defaults to the hostnames of `publicServerURL` and `serverURL`, so files hosted by Parse Server are allowed without opening arbitrary domains. */
   allowedFileUrlDomains: ?(string[]);
 }
 
