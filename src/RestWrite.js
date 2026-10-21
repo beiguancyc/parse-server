@@ -98,6 +98,9 @@ function RestWrite(config, auth, className, query, data, originalData, context, 
 RestWrite.prototype.execute = function () {
   return Promise.resolve()
     .then(() => {
+      return this.checkInternalFields();
+    })
+    .then(() => {
       return this.getUserAndRoleACL();
     })
     .then(() => {
@@ -110,10 +113,16 @@ RestWrite.prototype.execute = function () {
       return this.handleSession();
     })
     .then(() => {
+      return this.authorizeUserUpdate();
+    })
+    .then(() => {
       return this.validateAuthData();
     })
     .then(() => {
       return this.checkRestrictedFields();
+    })
+    .then(() => {
+      return this.resolveFileUrls();
     })
     .then(() => {
       return this.runBeforeSaveTrigger();
@@ -125,14 +134,14 @@ RestWrite.prototype.execute = function () {
       return this.deleteEmailResetTokenIfNeeded();
     })
     .then(() => {
+      return this.validateWritePermission();
+    })
+    .then(() => {
       return this.validateSchema();
     })
     .then(schemaController => {
       this.validSchemaController = schemaController;
       return this.setRequiredFieldsIfNeeded();
-    })
-    .then(() => {
-      return this.validateCreatePermission();
     })
     .then(() => {
       return this.transformUser();
@@ -157,6 +166,9 @@ RestWrite.prototype.execute = function () {
     })
     .then(() => {
       return this.cleanUserAuthData();
+    })
+    .then(() => {
+      return this.filterRevertedFieldsInResponse();
     })
     .then(() => {
       return this.filterProtectedFieldsInResponse();
@@ -227,6 +239,56 @@ RestWrite.prototype.validateSchema = function () {
     this.runOptions,
     this.auth.isMaintenance
   );
+};
+
+// Resolves the URLs of file pointers in the data that have no URL, so that the
+// Parse objects built for triggers and LiveQuery can be encoded.
+RestWrite.prototype.resolveFileUrls = async function () {
+  const files = Object.create(null);
+  const collect = value => {
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+    if (value.__type === 'File') {
+      if (typeof value.name !== 'string' || value.name === '') {
+        throw new Parse.Error(Parse.Error.INCORRECT_TYPE, 'This is not a valid File');
+      }
+      if (!value.url) {
+        files[value.name] = { __type: 'File', name: value.name };
+      }
+      return;
+    }
+    Object.values(value).forEach(collect);
+  };
+  collect(this.data);
+  if (Object.keys(files).length === 0) {
+    return;
+  }
+  await this.config.filesController.expandFilesInObject(this.config, files);
+  this.fileUrls = Object.assign(this.fileUrls || Object.create(null), files);
+};
+
+// Returns a copy of the data with the resolved URLs added to file pointers.
+RestWrite.prototype.cloneWithFileUrls = function (object) {
+  const data = structuredClone(object);
+  if (!this.fileUrls) {
+    return data;
+  }
+  const addUrls = value => {
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+    if (value.__type === 'File') {
+      const file = typeof value.name === 'string' && this.fileUrls[value.name];
+      if (!value.url && file) {
+        value.url = file.url;
+      }
+      return;
+    }
+    Object.values(value).forEach(addUrls);
+  };
+  addUrls(data);
+  return data;
 };
 
 // Runs any beforeSave triggers against this operation.
@@ -314,6 +376,10 @@ RestWrite.prototype.runBeforeSaveTrigger = function () {
         Utils.checkProhibitedKeywords(this.config, this.data);
       } catch (error) {
         throw new Parse.Error(Parse.Error.INVALID_KEY_NAME, `${error}`);
+      }
+      if (response && response.object) {
+        // The trigger may have set file pointers without URL
+        return this.resolveFileUrls();
       }
     });
 };
@@ -465,13 +531,16 @@ RestWrite.prototype.validateAuthData = function () {
       return providerData && typeof providerData === 'object' && Object.keys(providerData).length;
     });
 
-  if (!this.query && !hasAuthData) {
-    if (typeof this.data.username !== 'string' || _.isEmpty(this.data.username)) {
-      throw new Parse.Error(Parse.Error.USERNAME_MISSING, 'bad or missing username');
-    }
-    if (typeof this.data.password !== 'string' || _.isEmpty(this.data.password)) {
-      throw new Parse.Error(Parse.Error.PASSWORD_MISSING, 'password is required');
-    }
+  const requiresCredentials = !this.query && !hasAuthData;
+  const isMissing = value => typeof value !== 'string' || _.isEmpty(value);
+  // An empty username on create with authData is replaced by a random one
+  const checkUsername = requiresCredentials || (this.query && this.data.username !== undefined);
+  const checkPassword = requiresCredentials || this.data.password !== undefined;
+  if (checkUsername && isMissing(this.data.username)) {
+    throw new Parse.Error(Parse.Error.USERNAME_MISSING, 'bad or missing username');
+  }
+  if (checkPassword && isMissing(this.data.password)) {
+    throw new Parse.Error(Parse.Error.PASSWORD_MISSING, 'password is required');
   }
 
   if (!Object.prototype.hasOwnProperty.call(this.data, 'authData')) {
@@ -573,13 +642,14 @@ RestWrite.prototype.handleAuthData = async function (authData) {
   const results = this.filteredObjectsByACL(r);
 
   const userId = this.getUserId();
+  const isLogin = !userId;
   const userResult = results[0];
   const foundUserIsNotCurrentUser = userId && userResult && userId !== userResult.objectId;
 
   if (results.length > 1 || foundUserIsNotCurrentUser) {
     // To avoid https://github.com/parse-community/parse-server/security/advisories/GHSA-8w3j-g983-8jh5
     // Let's run some validation before throwing
-    await Auth.handleAuthDataValidation(authData, this, userResult);
+    await Auth.handleAuthDataValidation(authData, this, userResult, { isLogin });
     throw new Parse.Error(Parse.Error.ACCOUNT_ALREADY_LINKED, 'this auth is already used');
   }
 
@@ -587,7 +657,9 @@ RestWrite.prototype.handleAuthData = async function (authData) {
   if (!results.length) {
     const { authData: validatedAuthData, authDataResponse } = await Auth.handleAuthDataValidation(
       authData,
-      this
+      this,
+      undefined,
+      { isLogin }
     );
     this.authDataResponse = authDataResponse;
     // Replace current authData by the new validated one
@@ -607,8 +679,6 @@ RestWrite.prototype.handleAuthData = async function (authData) {
     const isCurrentUserLoggedOrMaster =
       (this.auth && this.auth.user && this.auth.user.id === userResult.objectId) ||
       this.auth.isMaster;
-
-    const isLogin = !userId;
 
     if (isLogin || isCurrentUserLoggedOrMaster) {
       // no user making the call
@@ -641,7 +711,7 @@ RestWrite.prototype.handleAuthData = async function (authData) {
       }
 
       // Prevent validating if no mutated data detected on update
-      if (!hasMutatedAuthData && isCurrentUserLoggedOrMaster) {
+      if (!isLogin && !hasMutatedAuthData && isCurrentUserLoggedOrMaster) {
         return;
       }
 
@@ -652,7 +722,8 @@ RestWrite.prototype.handleAuthData = async function (authData) {
         const res = await Auth.handleAuthDataValidation(
           isLogin ? authData : mutatedAuthData,
           this,
-          userResult
+          userResult,
+          { isLogin }
         );
         this.data.authData = res.authData;
         this.authDataResponse = res.authDataResponse;
@@ -713,6 +784,18 @@ RestWrite.prototype.handleAuthData = async function (authData) {
   }
 };
 
+// Rejects internal fields in client-supplied data
+RestWrite.prototype.checkInternalFields = function () {
+  if (this.auth.isMaster || this.auth.isMaintenance) {
+    return;
+  }
+  for (const fieldName in this.data) {
+    if (fieldName.charAt(0) === '_') {
+      throw new Parse.Error(Parse.Error.INVALID_KEY_NAME, `Invalid field name: ${fieldName}.`);
+    }
+  }
+};
+
 RestWrite.prototype.checkRestrictedFields = async function () {
   if (this.className !== '_User') {
     return;
@@ -727,21 +810,50 @@ RestWrite.prototype.checkRestrictedFields = async function () {
   }
 };
 
-// Validates the create class-level permission before transformUser runs.
-// This prevents user enumeration (username/email existence) when public
-// create is disabled on _User, because transformUser checks uniqueness
-// before the CLP is enforced in runDatabaseOperation.
-RestWrite.prototype.validateCreatePermission = async function () {
-  if (this.query || this.auth.isMaster || this.auth.isMaintenance) {
+// Validates the create or update class-level permission before schema validation
+RestWrite.prototype.validateWritePermission = async function () {
+  if (this.auth.isMaster || this.auth.isMaintenance) {
     return;
   }
-  if (!this.validSchemaController) {
-    return;
-  }
-  await this.validSchemaController.validatePermission(
+  const schemaController = await this.config.database.loadSchema();
+  await schemaController.validatePermission(
     this.className,
     this.runOptions.acl || [],
-    'create'
+    this.query ? 'update' : 'create'
+  );
+};
+
+// Authorize a _User update before any step reads the target account
+RestWrite.prototype.authorizeUserUpdate = async function () {
+  if (this.className !== '_User' || !this.query) {
+    return;
+  }
+  if (this.auth.isMaster || this.auth.isMaintenance) {
+    return;
+  }
+  if (this.auth.isUnauthenticated()) {
+    throw createSanitizedError(
+      Parse.Error.SESSION_MISSING,
+      `Cannot modify user ${this.query.objectId}.`,
+      this.config
+    );
+  }
+  // Body objectId must not retarget the update
+  if (this.data.objectId !== undefined && this.data.objectId !== this.query.objectId) {
+    throw new Parse.Error(Parse.Error.OBJECT_NOT_FOUND, 'Object not found.');
+  }
+  // Owner update reads only own data; the write stays ACL-checked
+  if (this.auth.user.id === this.query.objectId) {
+    return;
+  }
+  // Write access check via the write-path ACL enforcement
+  await this.config.database.update(
+    this.className,
+    { objectId: this.query.objectId },
+    {},
+    this.runOptions,
+    false,
+    true
   );
 };
 
@@ -969,11 +1081,11 @@ RestWrite.prototype._validatePasswordRequirements = function () {
       // username is not passed during password reset
       if (this.data.password.indexOf(this.data.username) >= 0)
       { return Promise.reject(new Parse.Error(Parse.Error.VALIDATION_ERROR, containsUsernameError)); }
-    } else {
-      // retrieve the User object using objectId during password reset
-      return this.config.database.find('_User', { objectId: this.objectId() }).then(results => {
+    } else if (this.query) {
+      // retrieve the User object using the URL object ID during password reset
+      return this.config.database.find('_User', { objectId: this.query.objectId }).then(results => {
         if (results.length != 1) {
-          throw undefined;
+          throw new Parse.Error(Parse.Error.OBJECT_NOT_FOUND, 'Object not found.');
         }
         if (this.data.password.indexOf(results[0].username) >= 0)
         { return Promise.reject(
@@ -992,13 +1104,13 @@ RestWrite.prototype._validatePasswordHistory = function () {
     return this.config.database
       .find(
         '_User',
-        { objectId: this.objectId() },
+        { objectId: this.query.objectId },
         { keys: ['_password_history', '_hashed_password'] },
         Auth.maintenance(this.config)
       )
       .then(results => {
         if (results.length != 1) {
-          throw undefined;
+          throw new Parse.Error(Parse.Error.OBJECT_NOT_FOUND, 'Object not found.');
         }
         const user = results[0];
         let oldPasswords = [];
@@ -1151,6 +1263,14 @@ RestWrite.prototype.deleteEmailResetTokenIfNeeded = function () {
 };
 
 RestWrite.prototype.destroyDuplicatedSessions = function () {
+  // Skip if the response is already set, matching the other write-pipeline steps
+  // (runDatabaseOperation, runAfterSaveTrigger). A non-master POST /classes/_Session
+  // create has handleSession() set this.response before this runs, so this guard
+  // prevents the dedup delete from acting on the client-supplied `user`/`installationId`
+  // rather than on the server-generated session data.
+  if (this.response) {
+    return;
+  }
   // Only for _Session, and at creation time
   if (this.className != '_Session' || this.query) {
     return;
@@ -1269,7 +1389,9 @@ RestWrite.prototype.handleSession = function () {
       additionalSessionData,
     });
 
-    return createSession().then(results => {
+    // Enforce the caller's class-level permissions and schema before the master write
+    const validated = this.validateWritePermission().then(() => this.validateSchema());
+    return validated.then(() => createSession()).then(results => {
       if (!results.response) {
         throw new Parse.Error(Parse.Error.INTERNAL_SERVER_ERROR, 'Error creating session.');
       }
@@ -1291,6 +1413,33 @@ RestWrite.prototype.handleSession = function () {
 RestWrite.prototype.handleInstallation = function () {
   if (this.response || this.className !== '_Installation') {
     return;
+  }
+
+  // The deduplication below embeds these client-supplied values directly into database
+  // queries that delete or update rows with master privileges, and it runs before
+  // `validateSchema`, so their types must be enforced here: a non-string value would
+  // otherwise reach the database as a query constraint (such as an operator object
+  // `{"$ne": null}`) matching rows the client never identified, instead of as a literal
+  // value to match against. The schema declares all three as `String`, but that check
+  // cannot be reused here; it runs later in the write pipeline and moving it earlier
+  // would mutate the schema before the permission check. The field list is a property of
+  // this function rather than of the schema: it is the set of values spliced into the
+  // deduplication queries below.
+  for (const fieldName of ['deviceToken', 'installationId', 'appIdentifier']) {
+    const value = this.data[fieldName];
+    if (value === undefined || value === null || typeof value === 'string') {
+      continue;
+    }
+    if (fieldName === 'appIdentifier' && value.__op === 'Delete') {
+      continue;
+    }
+    const actualType = Array.isArray(value)
+      ? 'Array'
+      : `${typeof value}`.replace(/^./, character => character.toUpperCase());
+    throw new Parse.Error(
+      Parse.Error.INCORRECT_TYPE,
+      `schema mismatch for _Installation.${fieldName}; expected String but got ${actualType}`
+    );
   }
 
   if (
@@ -1318,8 +1467,8 @@ RestWrite.prototype.handleInstallation = function () {
 
   let installationId = this.data.installationId;
 
-  // If data.installationId is not set and we're not master, we can lookup in auth
-  if (!installationId && !this.auth.isMaster && !this.auth.isMaintenance) {
+  // Create only: the request installation ID names the caller's own installation
+  if (!installationId && !this.query && !this.auth.isMaster && !this.auth.isMaintenance) {
     installationId = this.auth.installationId;
   }
 
@@ -1455,6 +1604,12 @@ RestWrite.prototype.handleInstallation = function () {
             },
           };
           if (this.data.appIdentifier) {
+            // A `Delete` operation is applied only after the deduplication runs, and no
+            // installation matched here to take a scope from. Skip the cleanup rather than
+            // run it unscoped across every application, or query on the operation itself.
+            if (typeof this.data.appIdentifier !== 'string') {
+              return;
+            }
             delQuery['appIdentifier'] = this.data.appIdentifier;
           }
           const installationOpts = this.config.installation || {};
@@ -1511,7 +1666,19 @@ RestWrite.prototype.handleInstallation = function () {
               return idMatch.objectId;
             }
             if (this.data.appIdentifier) {
-              delQuery['appIdentifier'] = this.data.appIdentifier;
+              // A `Delete` operation is applied only after the deduplication runs, so scope
+              // the cleanup to the value the matched installation still holds. Dropping the
+              // constraint would let the cleanup reach installations of other applications,
+              // and the operation itself cannot match a String, so skip the cleanup when no
+              // scope is available.
+              const appIdentifier =
+                typeof this.data.appIdentifier === 'string'
+                  ? this.data.appIdentifier
+                  : idMatch.appIdentifier;
+              if (typeof appIdentifier !== 'string') {
+                return idMatch.objectId;
+              }
+              delQuery['appIdentifier'] = appIdentifier;
             }
             const installationOpts = this.config.installation || {};
             return InstallationDedup.removeConflictingDeviceToken({
@@ -1613,13 +1780,13 @@ RestWrite.prototype.runDatabaseOperation = function () {
       defer = this.config.database
         .find(
           '_User',
-          { objectId: this.objectId() },
+          { objectId: this.query.objectId },
           { keys: ['_password_history', '_hashed_password'] },
           Auth.maintenance(this.config)
         )
         .then(results => {
           if (results.length != 1) {
-            throw undefined;
+            throw new Parse.Error(Parse.Error.OBJECT_NOT_FOUND, 'Object not found.');
           }
           const user = results[0];
           let oldPasswords = [];
@@ -1781,19 +1948,27 @@ RestWrite.prototype.runAfterSaveTrigger = function () {
   }
 
   const { originalObject, updatedObject } = this.buildParseObjects();
-  updatedObject._handleSaveResponse(this.response.response, this.response.status || 200);
+  updatedObject._handleSaveResponse(
+    this.cloneWithFileUrls(this.response.response),
+    this.response.status || 200
+  );
 
   if (hasLiveQuery) {
-    this.config.database.loadSchema().then(schemaController => {
-      // Notify LiveQueryServer if possible
-      const perms = schemaController.getClassLevelPermissions(updatedObject.className);
-      this.config.liveQueryController.onAfterSave(
-        updatedObject.className,
-        updatedObject,
-        originalObject,
-        perms
-      );
-    });
+    this.config.database
+      .loadSchema()
+      .then(schemaController => {
+        // Notify LiveQueryServer if possible
+        const perms = schemaController.getClassLevelPermissions(updatedObject.className);
+        this.config.liveQueryController.onAfterSave(
+          updatedObject.className,
+          updatedObject,
+          originalObject,
+          perms
+        );
+      })
+      .catch(err => {
+        logger.error('LiveQuery afterSave notification failed', err);
+      });
   }
   if (!hasAfterSaveHook) {
     return Promise.resolve();
@@ -1816,7 +1991,8 @@ RestWrite.prototype.runAfterSaveTrigger = function () {
       } else {
         this.response.response = this._updateResponseWithData(
           (result || updatedObject).toJSON(),
-          this.data
+          this.data,
+          true
         );
       }
     })
@@ -1846,7 +2022,7 @@ RestWrite.prototype.sanitizedData = function () {
       delete data[key];
     }
     return data;
-  }, structuredClone(this.data));
+  }, this.cloneWithFileUrls(this.data));
   return Parse._decode(undefined, data);
 };
 
@@ -1878,9 +2054,11 @@ RestWrite.prototype.buildParseObjects = function () {
   const updatedObject = triggers.inflate(extraData, this.originalData);
   Object.keys(this.data).reduce(function (data, key) {
     if (key.indexOf('.') > 0) {
-      if (typeof data[key].__op === 'string') {
+      // Null and undefined are set at their own dot notation path, like an operation
+      if (data[key] == null || typeof data[key].__op === 'string') {
         if (!readOnlyAttributes.includes(key)) {
-          updatedObject.set(key, data[key]);
+          // The SDK key name rules apply to top-level fields only
+          updatedObject.set(key, data[key], { ignoreValidation: true });
         }
       } else {
         // subdocument key with dot notation { 'x.y': v } => { 'x': { 'y' : v } })
@@ -1896,7 +2074,7 @@ RestWrite.prototype.buildParseObjects = function () {
       delete data[key];
     }
     return data;
-  }, structuredClone(this.data));
+  }, this.cloneWithFileUrls(this.data));
 
   const sanitized = this.sanitizedData();
   for (const attribute of readOnlyAttributes) {
@@ -1945,20 +2123,211 @@ RestWrite.prototype.filterProtectedFieldsInResponse = async function () {
   if (!protectedFields) {
     return;
   }
-  for (const field of protectedFields) {
-    delete this.response.response[field];
+  for (const key of Object.keys(this.response.response)) {
+    if (protectedFields.some(field => key === field || key.startsWith(`${field}.`))) {
+      delete this.response.response[key];
+    }
   }
 };
 
-RestWrite.prototype._updateResponseWithData = function (response, data) {
+const hasOwn = (object, key) =>
+  object !== null && object !== undefined && Object.prototype.hasOwnProperty.call(object, key);
+
+// Whether a dot notation path can descend into the value
+const isContainer = value =>
+  value !== null && typeof value === 'object' && !value.__type && !value.__op;
+
+// Reads a dot notation path through own properties of containers only
+const getOwnPath = (object, path) => {
+  let value = object;
+  for (const key of path) {
+    if (!isContainer(value) || !hasOwn(value, key)) {
+      return undefined;
+    }
+    value = value[key];
+  }
+  return value;
+};
+
+// Restores a reverted dot notation key in the response
+RestWrite.prototype._restoreRevertedPath = function (response, writeData, written, key, finalObject) {
+  // A write at or beneath the key governs
+  if (written.some(k => k === key || k.startsWith(`${key}.`))) {
+    return;
+  }
+  const path = key.split('.');
+  // A returned object without the field leaves the stored value
+  const fromFinal = !!finalObject && hasOwn(finalObject, path[0]);
+  let value = fromFinal ? finalObject : this.originalData || {};
+  let depth = 0;
+  let authoritative = fromFinal;
+  if (!fromFinal) {
+    // A written ancestor governs; computed operations are returned expanded
+    const ancestor = written
+      .filter(k => key.startsWith(`${k}.`))
+      .sort((a, b) => b.length - a.length)[0];
+    if (ancestor) {
+      const ancestorPath = ancestor.split('.');
+      let returned = getOwnPath(response, ancestorPath);
+      // An unchanged computed result is no longer in the response
+      const op = writeData[ancestor]?.__op;
+      if (returned === undefined && op && op !== 'Delete') {
+        returned = getOwnPath(this.originalData, ancestorPath);
+      }
+      value = returned !== undefined ? returned : writeData[ancestor];
+      if (!isContainer(value)) {
+        return;
+      }
+      depth = ancestorPath.length;
+      authoritative = true;
+    }
+  }
+  while (depth < path.length && isContainer(value) && hasOwn(value, path[depth])) {
+    value = value[path[depth++]];
+  }
+  // A missing array index returns the whole array, so the client keeps no hole
+  const missingIndex = depth < path.length && Array.isArray(value) && /^\d+$/.test(path[depth]);
+  if (depth < path.length && !missingIndex) {
+    if (isContainer(value)) {
+      // Delete at the first missing key
+      depth++;
+      value = undefined;
+    } else if (value?.__op) {
+      return;
+    } else {
+      const unchanged = util.isDeepStrictEqual(
+        value,
+        getOwnPath(this.originalData, path.slice(0, depth))
+      );
+      if (!fromFinal || unchanged) {
+        // Clears the client operation beneath an unchanged typed value
+        if (value?.__type && unchanged) {
+          response[key] = { __op: 'Delete' };
+        }
+        return;
+      }
+    }
+  }
+  const target = path.slice(0, depth).join('.');
+  const keys = [...written, ...Object.keys(response)];
+  const overlaps = prefix =>
+    keys.some(k => k === prefix || k.startsWith(`${prefix}.`) || prefix.startsWith(`${k}.`));
+  if (!authoritative && (value === undefined || missingIndex) && overlaps(target)) {
+    // Another write creates the path; clear the shallowest untouched reverted part
+    if (value === undefined) {
+      for (let length = depth + 1; length <= path.length; length++) {
+        const prefix = path.slice(0, length).join('.');
+        if (!overlaps(prefix)) {
+          response[prefix] = { __op: 'Delete' };
+          break;
+        }
+      }
+    }
+    return;
+  }
+  for (const responseKey of Object.keys(response)) {
+    if (responseKey.startsWith(`${target}.`)) {
+      delete response[responseKey];
+    }
+  }
+  response[target] = value === undefined ? { __op: 'Delete' } : value;
+};
+
+// Returns reverted fields of an update only as the caller can read them
+RestWrite.prototype.filterRevertedFieldsInResponse = async function () {
+  const response = this.response?.response;
+  if (!this.query || !response || !this.pendingOps.operations) {
+    return;
+  }
+  if (this.auth.isMaster || this.auth.isMaintenance) {
+    return;
+  }
   const stateController = Parse.CoreManager.getObjectStateController();
   const [pending] = stateController.getPendingOps(this.pendingOps.identifier);
+  const reverted = Object.keys(this.pendingOps.operations).filter(key => !pending[key]);
+  const keys = Object.keys(response).filter(key =>
+    reverted.some(path => path === key || path.startsWith(`${key}.`))
+  );
+  if (!keys.length) {
+    return;
+  }
+  let view;
+  try {
+    const query = await RestQuery({
+      method: RestQuery.Method.get,
+      config: this.config,
+      auth: this.auth,
+      className: this.className,
+      restWhere: { objectId: this.query.objectId },
+      runBeforeFind: false,
+      runAfterFind: false,
+      context: this.context,
+    });
+    view = (await query.execute()).results[0];
+  } catch (error) {
+    // Fails closed; access denial is expected
+    const denied = [Parse.Error.OPERATION_FORBIDDEN, Parse.Error.OBJECT_NOT_FOUND];
+    if (!(error instanceof Parse.Error) || !denied.includes(error.code)) {
+      logger.warn('Failed to read reverted fields for the save response', error);
+    }
+  }
+  for (const key of keys) {
+    // Removed beneath a key the caller cannot read
+    if (!hasOwn(response, key)) {
+      continue;
+    }
+    const path = key.split('.');
+    const value = getOwnPath(view, path);
+    if (value === undefined) {
+      for (const responseKey of Object.keys(response)) {
+        if (responseKey.startsWith(`${key}.`)) {
+          delete response[responseKey];
+        }
+      }
+      if (key === 'ACL') {
+        // The SDK cannot apply an operation to ACL
+        delete response[key];
+      } else {
+        response[key] = { __op: 'Delete' };
+      }
+    } else if (util.isDeepStrictEqual(response[key], getOwnPath(this.originalData, path))) {
+      // The stored value as the caller reads it
+      response[key] = value;
+    }
+  }
+};
+
+RestWrite.prototype._updateResponseWithData = function (response, data, isFinalObject = false) {
+  const stateController = Parse.CoreManager.getObjectStateController();
+  const [pending] = stateController.getPendingOps(this.pendingOps.identifier);
+  let revertedData;
+  const revertedPaths = [];
   for (const key in this.pendingOps.operations) {
-    if (!pending[key]) {
-      data[key] = this.originalData ? this.originalData[key] : { __op: 'Delete' };
+    if (pending[key]) {
+      continue;
+    }
+    // The SDK cannot apply an operation or a dot notation path to ACL
+    if (key.startsWith('ACL.') || (key === 'ACL' && !hasOwn(this.originalData, 'ACL'))) {
+      continue;
+    }
+    if (key.includes('.')) {
+      revertedPaths.push(key);
+      continue;
+    }
+    // Response only; the write data builds the afterSave and LiveQuery objects
+    revertedData ||= { ...data };
+    revertedData[key] = hasOwn(this.originalData, key)
+      ? this.originalData[key]
+      : { __op: 'Delete' };
+    this.storage.fieldsChangedByTrigger ||= [];
+    // Once only, so an afterSave unset is not undone by a second entry
+    if (this.storage.fieldsChangedByTrigger.indexOf(key) < 0) {
       this.storage.fieldsChangedByTrigger.push(key);
     }
   }
+  const responseData = revertedData || data;
+  // The final object, before unchanged fields are removed from the response
+  const finalObject = isFinalObject && revertedPaths.length ? { ...response } : undefined;
   const skipKeys = [...(requiredColumns.read[this.className] || [])];
   if (!this.query) {
     skipKeys.push('objectId', 'createdAt');
@@ -1974,17 +2343,14 @@ RestWrite.prototype._updateResponseWithData = function (response, data) {
     if (
       value == null ||
       (value.__type && value.__type === 'Pointer') ||
-      util.isDeepStrictEqual(data[key], value) ||
+      util.isDeepStrictEqual(responseData[key], value) ||
       util.isDeepStrictEqual((this.originalData || {})[key], value)
     ) {
       delete response[key];
     }
   }
-  if (_.isEmpty(this.storage.fieldsChangedByTrigger)) {
-    return response;
-  }
-  this.storage.fieldsChangedByTrigger.forEach(fieldName => {
-    const dataValue = data[fieldName];
+  (this.storage.fieldsChangedByTrigger || []).forEach(fieldName => {
+    const dataValue = responseData[fieldName];
 
     if (!Object.prototype.hasOwnProperty.call(response, fieldName)) {
       response[fieldName] = dataValue;
@@ -1997,6 +2363,12 @@ RestWrite.prototype._updateResponseWithData = function (response, data) {
       }
     }
   });
+  if (revertedPaths.length) {
+    const written = Object.keys(data);
+    for (const key of revertedPaths) {
+      this._restoreRevertedPath(response, data, written, key, finalObject);
+    }
+  }
   return response;
 };
 
